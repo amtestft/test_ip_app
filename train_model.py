@@ -53,15 +53,11 @@ X_train, X_test, y_train, y_test = train_test_split(
 # === STEP 6: Train Sparse Model using Logistic Regression with L1 penalty ===
 from sklearn.model_selection import GridSearchCV
 
-weights = np.linspace(0.0, 0.99, 10)
-class_weight_options = [{'0': round(w, 2), '1': round(1.0 - w, 2)} for w in weights]
-class_weight_options = [{0: w, 1: 1.0 - w} for w in weights]  # tipo corretto: int keys
-
 param_grid = {
-    'C': [0.01, 0.1, 1, 10],
+    'C': [0.01, 1, 100],
     'penalty': ['l1', 'l2'],
     'solver': ['saga'],
-    'class_weight': ['balanced'] + class_weight_options
+    'class_weight': ['balanced', {0: 0.33, 1: 0.67}]
 }
 
 grid = GridSearchCV(LogisticRegression(max_iter=2000, random_state=42), param_grid, scoring='roc_auc', cv=5)
