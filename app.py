@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import joblib
 from datetime import datetime
+import plotly.express as px
 
 import base64
 
@@ -36,6 +37,32 @@ def load_model():
     return model, preprocessor
 
 model, preprocessor = load_model()
+
+import plotly.express as px
+
+# Display top 5 features by importance
+try:
+    feature_importances = model.feature_importances_
+    feature_names = preprocessor.get_feature_names_out()  # works if your preprocessor is a ColumnTransformer
+
+    importance_df = pd.DataFrame({
+        "Feature": feature_names,
+        "Importance": feature_importances
+    }).sort_values(by="Importance", ascending=False).head(5)
+
+    st.subheader("📊 Top 5 Most Important Features")
+    fig = px.bar(
+        importance_df,
+        x="Importance",
+        y="Feature",
+        orientation="h",
+        title="Top 5 Feature Importances",
+        labels={"Importance": "Importance Score", "Feature": "Feature"},
+    )
+    fig.update_layout(yaxis=dict(autorange="reversed"))  # To show top importance on top
+    st.plotly_chart(fig, use_container_width=True)
+except Exception as e:
+    st.warning(f"Couldn't display feature importance: {e}")
 
 st.title("IP Classification Model")
 st.write("Upload a dataset and get prediction probabilities using the trained model.")
