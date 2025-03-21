@@ -38,12 +38,17 @@ def load_model():
 
 model, preprocessor = load_model()
 
-import plotly.express as px
+def get_feature_names(preprocessor):
+    try:
+        return preprocessor.pipeline.get_feature_names_out()
+    except:
+        # Fallback to basic names if transformers don’t support naming
+        num_features = model.feature_importances_.shape[0]
+        return [f"feature_{i}" for i in range(num_features)]
 
-# Display top 5 features by importance
 try:
     feature_importances = model.feature_importances_
-    feature_names = preprocessor.get_feature_names_out()  # works if your preprocessor is a ColumnTransformer
+    feature_names = get_feature_names(preprocessor)
 
     importance_df = pd.DataFrame({
         "Feature": feature_names,
@@ -57,12 +62,12 @@ try:
         y="Feature",
         orientation="h",
         title="Top 5 Feature Importances",
-        labels={"Importance": "Importance Score", "Feature": "Feature"},
     )
-    fig.update_layout(yaxis=dict(autorange="reversed"))  # To show top importance on top
+    fig.update_layout(yaxis=dict(autorange="reversed"))
     st.plotly_chart(fig, use_container_width=True)
 except Exception as e:
     st.warning(f"Couldn't display feature importance: {e}")
+
 
 st.title("IP Classification Model")
 st.write("Upload a dataset and get prediction probabilities using the trained model.")
