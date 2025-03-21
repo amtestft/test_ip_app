@@ -5,6 +5,7 @@ from datetime import datetime
 import plotly.express as px
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from category_encoders import TargetEncoder
+import base64
 
 from processor import MultiColumnLabelEncoder, ClickDataPreprocessor
 
@@ -102,7 +103,7 @@ uploaded_file = st.file_uploader("Upload your input CSV file", type=["csv"])
 if uploaded_file:
     try:
         # Load and display dataset
-        data = pd.read_csv(uploaded_file)
+        data = pd.read_csv(uploaded_file, low_memory=False)
         st.subheader("📄 Uploaded Data")
         st.write(data.head())
 

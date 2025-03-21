@@ -3,7 +3,6 @@ import numpy as np
 
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import LabelEncoder, StandardScaler, OneHotEncoder
-from category_encoders import TargetEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 
@@ -16,14 +15,14 @@ class MultiColumnLabelEncoder(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         for col in self.columns:
             le = LabelEncoder()
-            le.fit(X[col])
+            le.fit(X[col].astype(str))
             self.encoders[col] = le
         return self
 
     def transform(self, X):
         X = X.copy()
         for col in self.columns:
-            X[col] = self.encoders[col].transform(X[col])
+            X[col] = self.encoders[col].transform(X[col].astype(str)).astype(int)
         return X
 
 # ==== Custom Preprocessor ====
@@ -42,23 +41,32 @@ class ClickDataPreprocessor(BaseEstimator, TransformerMixin):
         self.labelencode_cols = [
             'country', 'region', 'device_brand', 'device_os_version', 'device_language'
         ]
-        self.targetencode_cols = [
+        self.high_cardinality_cols = [
             'city', 'device_model', 'browser_version'
         ]
         self.numerical_cols = None
+
+    def _simplify_categories(self, df, col, threshold=0.01):
+        df[col] = df[col].astype(str)
+        freq = df[col].value_counts(normalize=True)
+        common = freq[freq > threshold].index
+        df[col] = df[col].apply(lambda x: x if x in common else 'Other')
+        df[col] = df[col].astype("category")
+        return df
 
     def fit(self, X, y=None):
         df = X.copy()
         df = self._clean(df)
 
-        # Set numerical columns for scaling
+        for col in self.high_cardinality_cols:
+            if col in df.columns:
+                df = self._simplify_categories(df, col)
+
         self.numerical_cols = df.select_dtypes(include=[np.number]).columns.difference(['is_bot'])
 
-        # Build pipeline
         self.pipeline = ColumnTransformer(transformers=[
-            ('onehot', OneHotEncoder(drop='first', handle_unknown='ignore'), self.onehot_cols),
+            ('onehot', OneHotEncoder(drop='first', handle_unknown='ignore', sparse_output=False), self.onehot_cols + self.high_cardinality_cols),
             ('labelencode', MultiColumnLabelEncoder(self.labelencode_cols), self.labelencode_cols),
-            ('targetencode', TargetEncoder(), self.targetencode_cols),
             ('scale', StandardScaler(), self.numerical_cols)
         ], remainder='passthrough')
 
@@ -69,24 +77,20 @@ class ClickDataPreprocessor(BaseEstimator, TransformerMixin):
         df = X.copy()
         df = self._clean(df)
 
-        # Apply pipeline
-        X_processed = self.pipeline.transform(df)
-        # Get column names (optional, useful for converting back to DataFrame)
-        return X_processed
+        for col in self.high_cardinality_cols:
+            if col in df.columns:
+                df = self._simplify_categories(df, col)
+
+        return self.pipeline.transform(df)
 
     def _clean(self, df):
-        # Drop columns with all missing values
         missing = df.isnull().sum() / len(df)
         df = df[df.columns[missing < 1]]
-
-        # Drop irrelevant columns
         df = df.drop(columns=[col for col in self.columns_to_drop if col in df.columns], errors='ignore')
 
-        # Create ID if session_id and custom_client exist
         if 'session_id' in df.columns and 'custom_client' in df.columns:
             df['id'] = df['session_id'].astype(str) + '_' + df['custom_client'].astype(str)
 
-        # Ensure is_bot is binary int
         if 'is_bot' in df.columns:
             df['is_bot'] = df['is_bot'].astype(int)
 
