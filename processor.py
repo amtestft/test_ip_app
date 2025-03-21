@@ -1,8 +1,7 @@
 import pandas as pd
 import numpy as np
-
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.preprocessing import LabelEncoder, StandardScaler, OneHotEncoder
+from sklearn.preprocessing import LabelEncoder, MaxAbsScaler, OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 
@@ -22,6 +21,11 @@ class MultiColumnLabelEncoder(BaseEstimator, TransformerMixin):
     def transform(self, X):
         X = X.copy()
         for col in self.columns:
+            # Se per qualche ragione arrivasse ancora un valore sconosciuto
+            # (ad esempio, perché non è stato sostituito da "Other" a monte),
+            # qui potremmo decidere come gestirlo. Per semplicità:
+            known_values = set(self.encoders[col].classes_)
+            X[col] = X[col].apply(lambda x: x if x in known_values else "Other")
             X[col] = self.encoders[col].transform(X[col].astype(str)).astype(int)
         return X
 
@@ -51,23 +55,35 @@ class ClickDataPreprocessor(BaseEstimator, TransformerMixin):
         freq = df[col].value_counts(normalize=True)
         common = freq[freq > threshold].index
         df[col] = df[col].apply(lambda x: x if x in common else 'Other')
+        
+        # Converti in category
         df[col] = df[col].astype("category")
+
+        # Forza la presenza di "Other" tra le categorie
+        # (se non esiste già, la aggiunge senza errori)
+        if "Other" not in df[col].cat.categories:
+            df[col] = df[col].cat.add_categories(["Other"])
+
         return df
+
 
     def fit(self, X, y=None):
         df = X.copy()
         df = self._clean(df)
 
-        for col in self.high_cardinality_cols:
+        # Uniformiamo la logica: semplifichiamo sia le high_cardinality_cols
+        # sia le labelencode_cols
+        for col in self.high_cardinality_cols + self.labelencode_cols:
             if col in df.columns:
                 df = self._simplify_categories(df, col)
 
         self.numerical_cols = df.select_dtypes(include=[np.number]).columns.difference(['is_bot'])
 
         self.pipeline = ColumnTransformer(transformers=[
-            ('onehot', OneHotEncoder(drop='first', handle_unknown='ignore', sparse_output=False), self.onehot_cols + self.high_cardinality_cols),
+            ('onehot', OneHotEncoder(drop='first', handle_unknown='ignore', sparse_output=True), 
+             self.onehot_cols + self.high_cardinality_cols),
             ('labelencode', MultiColumnLabelEncoder(self.labelencode_cols), self.labelencode_cols),
-            ('scale', StandardScaler(), self.numerical_cols)
+            ('scale', MaxAbsScaler(), self.numerical_cols)
         ], remainder='passthrough')
 
         self.pipeline.fit(df, y)
@@ -77,7 +93,8 @@ class ClickDataPreprocessor(BaseEstimator, TransformerMixin):
         df = X.copy()
         df = self._clean(df)
 
-        for col in self.high_cardinality_cols:
+        # Stessa logica di semplificazione anche in transform
+        for col in self.high_cardinality_cols + self.labelencode_cols:
             if col in df.columns:
                 df = self._simplify_categories(df, col)
 
