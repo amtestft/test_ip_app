@@ -38,17 +38,39 @@ def load_model():
 
 model, preprocessor = load_model()
 
-def get_feature_names(preprocessor):
-    try:
-        return preprocessor.pipeline.get_feature_names_out()
-    except:
-        # Fallback to basic names if transformers don’t support naming
-        num_features = model.feature_importances_.shape[0]
-        return [f"feature_{i}" for i in range(num_features)]
+def get_real_feature_names(preprocessor):
+    """Extracts feature names from the ColumnTransformer inside the ClickDataPreprocessor."""
+    feature_names = []
+
+    for name, transformer, columns in preprocessor.pipeline.transformers_:
+        if isinstance(transformer, OneHotEncoder):
+            # OneHotEncoder generates multiple columns per feature
+            transformed_names = transformer.get_feature_names_out(columns)
+        elif isinstance(transformer, TargetEncoder):
+            # TargetEncoder outputs the same number of columns
+            transformed_names = columns
+        elif isinstance(transformer, MultiColumnLabelEncoder):
+            # LabelEncoder also outputs the same number of columns
+            transformed_names = columns
+        elif isinstance(transformer, StandardScaler):
+            # StandardScaler applies to numerical columns without renaming
+            transformed_names = columns
+        else:
+            # Passthrough case
+            transformed_names = columns
+
+        feature_names.extend(transformed_names)
+
+    return feature_names
+
 
 try:
     feature_importances = model.feature_importances_
-    feature_names = get_feature_names(preprocessor)
+    feature_names = get_real_feature_names(preprocessor)
+
+    # Ensure we have the correct number of feature names
+    if len(feature_names) != len(feature_importances):
+        feature_names = [f"feature_{i}" for i in range(len(feature_importances))]
 
     importance_df = pd.DataFrame({
         "Feature": feature_names,
