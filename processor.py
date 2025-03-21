@@ -32,7 +32,7 @@ class ClickDataPreprocessor(BaseEstimator, TransformerMixin):
         self.pipeline = None
         self.columns_to_drop = [
             'date', 'gclid', 'session_start', 'session_end', 'session_id', 'custom_client',
-            'device_is_limited_ad_tracking', 'id', 'total_conversions', 'engaged_users', 'total_sessions',
+            'device_is_limited_ad_tracking', 'id',
             'session_duration', 'average_session_duration', 'total_page_views'
         ]
         self.onehot_cols = [
