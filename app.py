@@ -3,12 +3,23 @@ import pandas as pd
 import joblib
 from datetime import datetime
 import plotly.express as px
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from category_encoders import TargetEncoder
 import base64
 import numpy as np
+from sklearn.pipeline import Pipeline
+from sklearn.base import BaseEstimator, TransformerMixin
 
 from processor import MultiColumnLabelEncoder, ClickDataPreprocessor
+
+# -------------------------------
+# Custom transformer for feature selection (must match train_model.py)
+# -------------------------------
+class FeatureSelector(BaseEstimator, TransformerMixin):
+    def __init__(self, indices):
+        self.indices = indices
+    def fit(self, X, y=None):
+        return self
+    def transform(self, X):
+        return X[:, self.indices]
 
 MAPPING = {
     "0": "@", "1": "A", "2": "B", "3": "C", "4": "D",
@@ -33,55 +44,48 @@ def deobfuscate_ip(obfuscated):
         print("Errore durante la deoffuscazione:", e)
         return None
 
-# Load model and preprocessor
+# -------------------------------
+# Load model and final preprocessor pipeline (includes feature selection)
+# -------------------------------
 @st.cache_resource
 def load_model():
     model = joblib.load("model.pkl")
-    preprocessor = joblib.load("preprocessor.pkl")
-    return model, preprocessor
+    final_preprocessor = joblib.load("preprocessor.pkl")
+    return model, final_preprocessor
 
-model, preprocessor = load_model()
+model, final_preprocessor = load_model()
 
-def get_real_feature_names(preprocessor):
-    """Extracts feature names from the ColumnTransformer inside the ClickDataPreprocessor."""
+def get_real_feature_names(final_preprocessor):
+    """
+    Extract the feature names from the preprocessor step and then select the ones
+    used by the feature selector.
+    """
+    # final_preprocessor is a Pipeline with steps: preprocessor and feature_selector
+    original_preprocessor = final_preprocessor.named_steps['preprocessor']
     feature_names = []
+    for name, transformer, columns in original_preprocessor.pipeline.transformers_:
+        try:
+            feature_names.extend(list(transformer.get_feature_names_out(columns)))
+        except Exception:
+            if isinstance(columns, list):
+                feature_names.extend(columns)
+            else:
+                feature_names.extend([f"{name}_{i}" for i in range(len(columns))])
+    feature_selector = final_preprocessor.named_steps['feature_selector']
+    indices = feature_selector.indices
+    selected_feature_names = [feature_names[i] for i in indices]
+    return selected_feature_names
 
-    for name, transformer, columns in preprocessor.pipeline.transformers_:
-        if isinstance(transformer, OneHotEncoder):
-            # OneHotEncoder genera più colonne per feature
-            transformed_names = transformer.get_feature_names_out(columns)
-        elif isinstance(transformer, TargetEncoder):
-            # TargetEncoder restituisce lo stesso numero di colonne
-            transformed_names = columns
-        elif isinstance(transformer, MultiColumnLabelEncoder):
-            # LabelEncoder mantiene i nomi originali
-            transformed_names = columns
-        elif isinstance(transformer, StandardScaler):
-            # StandardScaler applicato a colonne numeriche senza rinomina
-            transformed_names = columns
-        else:
-            # Caso di passthrough
-            transformed_names = columns
-
-        feature_names.extend(transformed_names)
-
-    return feature_names
-
-# Se il modello è LogisticRegression, usiamo i coefficienti per visualizzare le "importances"
+# Display model feature importances using logistic regression coefficients
 try:
-    # Verifichiamo che il modello abbia l'attributo coef_
     if hasattr(model, "coef_"):
         coefficients = model.coef_[0]
-        # Otteniamo i nomi completi delle feature (come usati nel preprocessor)
-        full_feature_names = get_real_feature_names(preprocessor)
-        # Se il modello ha salvato anche le feature non nulle, possiamo usarle per filtrare
-        # In ogni caso, calcoliamo le importanze come valore assoluto dei coefficienti
-        coef_data = [(full_feature_names[i], coefficients[i]) for i in range(len(full_feature_names))]
-        # Ordiniamo per valore assoluto decrescente
+        full_feature_names = get_real_feature_names(final_preprocessor)
+        n = min(len(coefficients), len(full_feature_names))
+        coef_data = [(full_feature_names[i], coefficients[i]) for i in range(n)]
         coef_data = sorted(coef_data, key=lambda x: abs(x[1]), reverse=True)
         importance_df = pd.DataFrame(coef_data, columns=["Feature", "Coefficient"]).head(5)
     else:
-        # Fallback nel caso in cui non si trovi l'attributo coef_
         raise AttributeError("Il modello non possiede l'attributo coef_.")
     
     st.subheader("📊 Top 5 Most Important Features")
@@ -105,37 +109,35 @@ uploaded_file = st.file_uploader("Upload your input CSV file", type=["csv"])
 
 if uploaded_file:
     try:
-        # Carica e visualizza il dataset
+        # Load and display the dataset
         data = pd.read_csv(uploaded_file, low_memory=False)
         st.subheader("📄 Uploaded Data")
         st.write(data.head())
 
-        # Verifica la presenza della colonna 'custom_client'
         if 'custom_client' not in data.columns:
             st.error("'custom_client' column is missing in the uploaded dataset.")
         else:
-            # Deoffusca custom_client e salvalo
+            # Deobfuscate custom_client and keep the original values
             data["custom_client_original"] = data["custom_client"].apply(deobfuscate_ip)
             custom_clients = data[["custom_client_original"]].copy()
 
-            # Applica il preprocessor
-            transformed_data = preprocessor.transform(data)
+            # Apply the final preprocessor pipeline (includes feature selection)
+            transformed_data = final_preprocessor.transform(data)
 
-            # Predict probabilities e classi
+            # Predict probabilities and classes
             probabilities = model.predict_proba(transformed_data)
             predicted_classes = model.predict(transformed_data)
 
-            # Costruisci il DataFrame dei risultati
+            # Build results dataframe
             results_df = custom_clients.copy()
-            results_df["prediction_probability"] = probabilities[:, 1]  # probabilità per la classe 1
+            results_df["prediction_probability"] = probabilities[:, 1]
             results_df["class"] = predicted_classes
             results_df["prediction_timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # Visualizza le predizioni
             st.subheader("🔍 Predictions")
             st.write(results_df.head())
 
-            # Funzione per convertire il DataFrame in CSV per il download
+            # Function to convert dataframe to CSV for download
             @st.cache_data
             def convert_df(df):
                 return df.to_csv(index=False).encode("utf-8")
