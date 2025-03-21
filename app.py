@@ -3,6 +3,8 @@ import pandas as pd
 import joblib
 from datetime import datetime
 import plotly.express as px
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from category_encoders import TargetEncoder
 
 import base64
 
